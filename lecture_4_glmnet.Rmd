@@ -1,0 +1,171 @@
+---
+title: 'Lecture 4: Regularization with glmnet'
+author: "Angelo Mancini"
+date: "October 19, 2016"
+output: html_document
+---
+
+The main R library for using regularization in the context of linear models (regression or classification) is `glmnet`.  This link takes you to a good quick guide to the `glmnet`, written by the authors of the package and one of the authors of ISLR.
+
+https://web.stanford.edu/~hastie/glmnet/glmnet_alpha.html
+
+If you haven't installed it, please run `install.packages('glmnet')`.
+
+Now, let's load the `glmnet` library.  (If you already have it installed, then start here.)
+
+```{r}
+library(glmnet)
+```
+
+For this hands-on session, we'll be working with the Hitters dataset again (baseball stats, salaries, etc.).  Let's load the `hitters.csv` file now.
+
+```{r}
+Hitters <- read.csv('hitters.csv',header=TRUE)
+```
+
+We can take a look at this data set to see what kinds of variables it has, whether we're dealing with a mix of continuous and categorial fields, etc.
+
+```{r}
+head(Hitters)
+```
+
+For now, we're going to build a classification model to predict whether or not a player's salary is above the median salary.  Before proceeding, we'll need to create a new binary response variable.  We're also going to drop rows with missing values of salary.
+
+```{r}
+Hitters <- Hitters[complete.cases(Hitters),]
+median_salary <- median(Hitters$Salary)
+y_median <- (Hitters$Salary >= median_salary)
+```
+
+The vector `y_median` is our DV, and we'd like to predict in terms of the other features in the Hitters dataset.  Unfortunately, `glmnet` doesn't directly accept data frames.  Instead, we need to convert our data frame of predictors into a 'model matrix'.  For continuous features (like number of home runs), the corresponding column in the model matrix looks identical.  However, for categorical features, a model matrix converts the categorical feature into several 0/1 binary columns (one per possible value of the categroical feature, except for the reference level of the feature, which will get absorbed into the intercept as in standard linear regression).  Fortunately, we can use the `model.matrix` function to build a model matrix, and it accepts standard regression formulas.
+
+
+```{r}
+# Create a model matrix that excludes Salary, but includes all other features.
+X <- model.matrix(Salary ~., data=Hitters)
+
+# Look at the model matrix
+head(X)
+```
+
+Looking at the model matrix `X`, we see that the first column is an intercept column always equal to 1.  It turns out that `glmnet` will automatically include an intercept when we do regression, so we don't need include it in the model matrix. Let's drop it.
+
+```{r}
+X <- X[,-1]
+```
+
+We're now ready to use `glmnet`.  By default, `glmnet` uses the "elastic-net" regularization penalty:
+
+$$ \frac{1-\alpha}{2} ||\beta||_2^2 + \alpha ||\beta||_1 $$
+
+so $\alpha=1$ corresponds to the lasso penalty and $\alpha=0$ corresponds to ridge penalty.  This means we can use `glmnet` to do Lasso, ridge, or anything in between, only by changing our choice of $\alpha$.
+
+Let's fit a lasso classification model for whether the salary is greater than the median:  
+
+````{r}
+# For binary classification, format is: glmnet(model_matrix_of_predictors, 0/1 vector of responses, family = 'binomial', choice of alpha )
+c.model.lasso<-glmnet(X, y_median, family="binomial", alpha=1)
+```
+
+We can create the coefficient plot, which shows how the values of the coefficients change as a function of shrinkage.  In this plot, `glmnet` measures shrinkage in terms of the L1 norm of the coefficient  vector.  Recall that if the L1 norm is equal to 0, it means all coefficients are set to zero (which corresponds to a very large penalty $\lambda$).  The larger the L1 norm of the coefficients, the more flexible the model, and the lower the value of $\lambda$ used to obtain the fit.  This will show us the coefficients as a function of the norm (which is inverse to $\lambda$).  
+
+The plot shows the L1 norm of the estimated coefficients along the bottom, the value of the coefficients along the vertical axis, and the number of non-zero coefficients along the top.
+
+```{r}
+plot(c.model.lasso)
+```
+
+Similarly, let's fit a lasso regression model for the salary itself.  The approach is the same as for the classification model, except that we tell `glmnet` we're doing regression by setting 'family' equal to Gaussian.
+
+````{r}
+r.model.lasso<-glmnet(X, Hitters$Salary, family="gaussian", alpha=1)
+```
+
+```{r}
+plot(r.model.lasso)
+```
+
+You can get more information on the Lasso runs using the `print` and `coef` commands. 
+
+The `print` command shows you two pieces of information for each value of $\lambda$ in the Lassso fit: the number of non-zero coefficients (`Df`), and the training $R^{2}$ of the model fit using the corresponding value of $\lambda$ (`%Dev`).
+
+```{r}
+print(r.model.lasso)
+```
+
+Note that the in-sample $R^{2}$ always increases as $\lambda$ gets smaller, which is expected since lower values of $\lambda$ correspond to more flexible models.
+
+To see how the coefficients change as a function of the penalty $\lambda$, you can use the `coef` command.  The rows correspond to the coefficients in our linear model, and there is one column per value of $\lambda$.  The first column corresponds to the largest value of $\lambda$ (least flexible model), while the last column corresponds to the smallest value of $\lambda$ (most flexible model).
+
+```{r}
+coef(r.model.lasso)
+```
+
+
+Moving on to model selection, we can use the function `cv.glmnet` to do cross-validation on top of the Lasso or ridge (or anything in between) to find the best value of $\lambda$ as measured by estimated prediction error.  It's surprisingly easy -works just like the calls to `glmnet` done above, except we call `cv.glmnet` instead, and pass in an additional argument indicating how many folds we want to use for k-fold cross-validation.
+
+````{r}
+c.cv.model.lasso<-cv.glmnet(X, y_median, family="binomial", alpha=1, nfolds=10) 
+r.cv.model.lasso<-cv.glmnet(X, Hitters$Salary, family="gaussian", alpha=1, nfolds=10)
+```
+
+We can see the estimated out-of-sample error from cross-validation as a function of $\lambda$.  However, `glmnet` displays results in terms of the log of $\lambda$.  The number of non-zero coefficients is displayed along the top of the plot, and the out-of-sample error is displayed along the vertical axis.
+
+```{r}
+plot(c.cv.model.lasso)
+```
+
+```{r}
+plot(r.cv.model.lasso)
+```
+
+The red dots plot the average test error from k-fold cross-validation at each value of $\lambda$, and the error bars correspond to +/- 1 standard deviation as calculated by looking at the k individual estimates of test error from cross-validation at each value of $\lambda$.
+
+Notice that in both plots, there are two dashed vertical lines.  The left-most vertical line marks the value of $\lambda$ that corresponds to the smallest estimated test error.  The right-most vertical line identifies the value of $\lambda$ corresponding to the one-standard-error-rule.
+
+Finally, let's see how to get the coefficients out.  Let's take the classification models as an example:
+
+```{r}
+attributes(c.cv.model.lasso)
+```
+
+If you know you want to use the coefficients corresponding to the minimum estimated test error, then you can use:
+
+```{r}
+coef(c.cv.model.lasso,s="lambda.min")
+```
+
+If you want to get the coefficients corresponding to the one-standard-error rule, then you can use:
+
+```{r}
+coef(c.cv.model.lasso,s="lambda.1se")
+```
+
+If you want to get coefficients for some other value of $\lambda$, then just set $s$ in the calls to the `coef` function above to the desired value of $\lambda$.
+
+
+And finally, let's run a classification model with the ridge penalty.  Notice that all features are always included, but their size shrinks:
+
+````{r}
+c.model.ridge<-glmnet(X, y_median, family="binomial", alpha=0)
+```
+
+This will show us the coefficients as a function of the norm (which is inverse to $\lambda$):
+
+```{r}
+plot(c.model.ridge)
+```
+
+````{r}
+c.cv.model.ridge<-cv.glmnet(X, y_median, family="binomial", alpha=0, nfolds=10)
+```
+
+```{r}
+plot(c.cv.model.ridge)
+```
+
+
+
+
+
+
